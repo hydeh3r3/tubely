@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 
@@ -18,6 +21,7 @@ type apiConfig struct {
 	platform         string
 	filepathRoot     string
 	assetsRoot       string
+	s3Client         *s3.Client
 	s3Bucket         string
 	s3Region         string
 	s3CfDistribution string
@@ -84,19 +88,30 @@ func main() {
 		log.Fatal("PORT environment variable is not set")
 	}
 
-	cfg := apiConfig{
+	// Configure AWS S3 client
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion(s3Region),
+	)
+	if err != nil {
+		log.Fatal("Unable to load AWS SDK config:", err)
+	}
+
+	s3Client := s3.NewFromConfig(cfg)
+
+	apiCfg := apiConfig{
 		db:               db,
 		jwtSecret:        jwtSecret,
 		platform:         platform,
 		filepathRoot:     filepathRoot,
 		assetsRoot:       assetsRoot,
+		s3Client:         s3Client,
 		s3Bucket:         s3Bucket,
 		s3Region:         s3Region,
 		s3CfDistribution: s3CfDistribution,
 		port:             port,
 	}
 
-	err = cfg.ensureAssetsDir()
+	err = apiCfg.ensureAssetsDir()
 	if err != nil {
 		log.Fatalf("Couldn't create assets directory: %v", err)
 	}
@@ -106,23 +121,23 @@ func main() {
 	mux.Handle("/app/", appHandler)
 
 	assetsHandler := http.StripPrefix("/assets", http.FileServer(http.Dir(assetsRoot)))
-	mux.Handle("/assets/", cacheMiddleware(assetsHandler))
+	mux.Handle("/assets/", noCacheMiddleware(assetsHandler))
 
-	mux.HandleFunc("POST /api/login", cfg.handlerLogin)
-	mux.HandleFunc("POST /api/refresh", cfg.handlerRefresh)
-	mux.HandleFunc("POST /api/revoke", cfg.handlerRevoke)
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)
+	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
+	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
 
-	mux.HandleFunc("POST /api/users", cfg.handlerUsersCreate)
+	mux.HandleFunc("POST /api/users", apiCfg.handlerUsersCreate)
 
-	mux.HandleFunc("POST /api/videos", cfg.handlerVideoMetaCreate)
-	mux.HandleFunc("POST /api/thumbnail_upload/{videoID}", cfg.handlerUploadThumbnail)
-	mux.HandleFunc("POST /api/video_upload/{videoID}", cfg.handlerUploadVideo)
-	mux.HandleFunc("GET /api/videos", cfg.handlerVideosRetrieve)
-	mux.HandleFunc("GET /api/videos/{videoID}", cfg.handlerVideoGet)
-	mux.HandleFunc("GET /api/thumbnails/{videoID}", cfg.handlerThumbnailGet)
-	mux.HandleFunc("DELETE /api/videos/{videoID}", cfg.handlerVideoMetaDelete)
+	mux.HandleFunc("POST /api/videos", apiCfg.handlerVideoMetaCreate)
+	mux.HandleFunc("POST /api/thumbnail_upload/{videoID}", apiCfg.handlerUploadThumbnail)
+	mux.HandleFunc("POST /api/video_upload/{videoID}", apiCfg.handlerUploadVideo)
+	mux.HandleFunc("GET /api/videos", apiCfg.handlerVideosRetrieve)
+	mux.HandleFunc("GET /api/videos/{videoID}", apiCfg.handlerVideoGet)
+	mux.HandleFunc("GET /api/thumbnails/{videoID}", apiCfg.handlerThumbnailGet)
+	mux.HandleFunc("DELETE /api/videos/{videoID}", apiCfg.handlerVideoMetaDelete)
 
-	mux.HandleFunc("POST /admin/reset", cfg.handlerReset)
+	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
