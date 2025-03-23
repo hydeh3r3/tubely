@@ -1,9 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
-	"math/rand"
 	"mime"
 	"net/http"
 	"os"
@@ -107,6 +107,20 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't save file", err)
 		return
+	}
+
+	// Also save in memory for quick retrieval
+	// Read file into memory for the map
+	imageData, err := os.ReadFile(filepath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't read saved file", err)
+		return
+	}
+
+	// Save to in-memory map
+	videoThumbnails[videoID] = thumbnail{
+		data:      imageData,
+		mediaType: mediaType,
 	}
 
 	// Update the video record with the thumbnail URL

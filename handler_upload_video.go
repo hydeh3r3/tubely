@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -100,20 +104,62 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Generate random filename
+	// Process video for fast start streaming
+	processedFilePath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video for fast start", err)
+		return
+	}
+	defer os.Remove(processedFilePath)
+
+	// Open the processed file for uploading
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open processed video file", err)
+		return
+	}
+	defer processedFile.Close()
+
+	// Get aspect ratio
+	aspectRatio, err := getVideoAspectRatio(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't determine video aspect ratio", err)
+		return
+	}
+
+	// Determine prefix based on aspect ratio
+	var prefix string
+	switch aspectRatio {
+	case "16:9":
+		prefix = "landscape"
+	case "9:16":
+		prefix = "portrait"
+	default:
+		prefix = "other"
+	}
+
+	// Generate random filename with prefix
 	randomBytes := make([]byte, 32)
 	_, err = rand.Read(randomBytes)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't generate random filename", err)
 		return
 	}
-	filename := base64.RawURLEncoding.EncodeToString(randomBytes) + ".mp4"
+	randomPart := base64.RawURLEncoding.EncodeToString(randomBytes)
+	filename := fmt.Sprintf("%s/%s.mp4", prefix, randomPart)
+
+	// Reset the file pointer again for upload
+	_, err = processedFile.Seek(0, io.SeekStart)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't reset processed file", err)
+		return
+	}
 
 	// Upload to S3
 	_, err = cfg.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(filename),
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: aws.String(mediaType),
 	})
 	if err != nil {
@@ -131,4 +177,57 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+// getVideoAspectRatio takes a file path and returns the aspect ratio as a string
+func getVideoAspectRatio(filePath string) (string, error) {
+	// Structure to hold ffprobe JSON output
+	type FFProbeOutput struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	// Run ffprobe command to get video metadata
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to run ffprobe: %w", err)
+	}
+
+	// Parse JSON output
+	var output FFProbeOutput
+	if err := json.Unmarshal(out.Bytes(), &output); err != nil {
+		return "", fmt.Errorf("failed to parse ffprobe output: %w", err)
+	}
+
+	// Make sure we have stream info
+	if len(output.Streams) == 0 {
+		return "", fmt.Errorf("no stream information found")
+	}
+
+	// Get dimensions
+	width := output.Streams[0].Width
+	height := output.Streams[0].Height
+
+	// Determine aspect ratio
+	if width > height {
+		// Check if it's close to 16:9
+		ratio := float64(width) / float64(height)
+		if math.Abs(ratio-16.0/9.0) < 0.1 {
+			return "16:9", nil
+		}
+	} else if height > width {
+		// Check if it's close to 9:16
+		ratio := float64(height) / float64(width)
+		if math.Abs(ratio-16.0/9.0) < 0.1 {
+			return "9:16", nil
+		}
+	}
+
+	// Not a standard ratio
+	return "other", nil
 }

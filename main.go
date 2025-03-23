@@ -2,15 +2,17 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
-	"github.com/google/uuid"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -130,14 +132,14 @@ func main() {
 	mux.HandleFunc("POST /api/users", apiCfg.handlerUsersCreate)
 
 	mux.HandleFunc("POST /api/videos", apiCfg.handlerVideoMetaCreate)
-	mux.HandleFunc("POST /api/thumbnail_upload/{videoID}", apiCfg.handlerUploadThumbnail)
 	mux.HandleFunc("POST /api/video_upload/{videoID}", apiCfg.handlerUploadVideo)
 	mux.HandleFunc("GET /api/videos", apiCfg.handlerVideosRetrieve)
 	mux.HandleFunc("GET /api/videos/{videoID}", apiCfg.handlerVideoGet)
-	mux.HandleFunc("GET /api/thumbnails/{videoID}", apiCfg.handlerThumbnailGet)
 	mux.HandleFunc("DELETE /api/videos/{videoID}", apiCfg.handlerVideoMetaDelete)
 
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
+
+	mux.HandleFunc("GET /api/thumbnails/{videoID}", apiCfg.handlerThumbnailGet)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -146,4 +148,27 @@ func main() {
 
 	log.Printf("Serving on: http://localhost:%s/app/\n", port)
 	log.Fatal(srv.ListenAndServe())
+}
+
+// processVideoForFastStart takes a file path and creates a new MP4 with fast start encoding
+func processVideoForFastStart(filePath string) (string, error) {
+	// Create output file path
+	outputPath := filePath + ".processing"
+
+	// Create ffmpeg command for fast start processing
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i", filePath,
+		"-c", "copy",
+		"-movflags", "faststart",
+		"-f", "mp4",
+		outputPath,
+	)
+
+	// Run the command
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to process video for fast start: %w", err)
+	}
+
+	return outputPath, nil
 }

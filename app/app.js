@@ -138,11 +138,18 @@ async function uploadThumbnail(videoID) {
       body: formData,
     });
     if (!res.ok) {
-      const data = await res.json();
-      throw new Error(`Failed to upload thumbnail. Error: ${data.error}`);
+      const errorText = await res.text();
+      let errorMessage = 'Failed to upload thumbnail';
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.error || errorMessage;
+      } catch (e) {
+        // If JSON parsing fails, use the raw error text
+        errorMessage = errorText || errorMessage;
+      }
+      throw new Error(errorMessage);
     }
 
-    await res.json();
     console.log('Thumbnail uploaded!');
     await getVideo(videoID);
   } catch (error) {
