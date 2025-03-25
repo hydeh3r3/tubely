@@ -167,19 +167,17 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Update video URL in database with bucket,key format
-	videoURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, filename)
+	// Update video URL in database with CloudFront URL
+	if cfg.s3CfDistribution == "" {
+		respondWithError(w, http.StatusInternalServerError, "CloudFront distribution not configured", nil)
+		return
+	}
+
+	videoURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, filename)
 	video.VideoURL = &videoURL
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video URL", err)
-		return
-	}
-
-	// Convert to signed URL before responding
-	video, err = cfg.dbVideoToSignedVideo(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't generate signed URL", err)
 		return
 	}
 
