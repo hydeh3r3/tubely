@@ -136,6 +136,7 @@ func main() {
 	mux.HandleFunc("GET /api/videos", apiCfg.handlerVideosRetrieve)
 	mux.HandleFunc("GET /api/videos/{videoID}", apiCfg.handlerVideoGet)
 	mux.HandleFunc("DELETE /api/videos/{videoID}", apiCfg.handlerVideoMetaDelete)
+	mux.HandleFunc("POST /api/videos/{videoID}/thumbnail", apiCfg.handlerUploadThumbnail)
 
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
 
